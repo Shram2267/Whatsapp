@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 import json
 import os
-import subprocess
 import re
 from datetime import datetime
 from openpyxl import load_workbook
@@ -26,7 +25,7 @@ def load_templates():
 def save_templates(templates):
     with open(TEMPLATE_FILE, "w") as f:
         json.dump(templates, f, indent=4)
-    st.cache_resource.clear()
+    get_templates_cached.clear()
 
 def update_template_mapping(template_name, mappings):
     templates = load_templates()
@@ -46,25 +45,24 @@ def map_column(label, columns, saved, key_prefix):
 
     mapping_type = st.radio(
         f"{label} - Map type", ["Column", "Custom"], 
-        index=(0 if mapping_type=="column" else 1),
+        index=(0 if mapping_type == "column" else 1),
         key=f"{key_prefix}_type",
-        horizontal=True  # <-- Make radio horizontal
+        horizontal=True
     )
-    result = {}
+
     if mapping_type == "Column":
         idx = columns.get_loc(value) if value in columns else 0
         selected_col = st.selectbox(
             "", options=columns, index=idx, key=f"{key_prefix}_col",
             label_visibility="collapsed"
         )
-        result = {"type": "column", "value": selected_col}
+        return {"type": "column", "value": selected_col}
     else:
         custom_val = st.text_input(
             "", value=value, key=f"{key_prefix}_custom",
             label_visibility="collapsed"
         )
-        result = {"type": "custom", "value": custom_val}
-    return result
+        return {"type": "custom", "value": custom_val}
 
 # ---------- App Layout ----------
 st.set_page_config(page_title="📤 WhatsApp Sender", layout="centered")
@@ -166,6 +164,7 @@ with tab2:
             )
             uploaded_image = st.file_uploader("Upload default image (optional)", type=["jpg", "jpeg", "png"])
             image_url = ""
+
             if uploaded_image:
                 with st.spinner("Uploading image to imgBB..."):
                     imgbb_api_key = "085bfec8c1691df489038be3dce95cfc"
@@ -189,10 +188,7 @@ with tab2:
                 for field, mapinfo in column_mapping.items():
                     if field == "mobile_no":
                         continue
-                    if mapinfo["type"] == "column":
-                        val = str(row.get(mapinfo["value"], "")).strip()
-                    else:
-                        val = mapinfo["value"]
+                    val = str(row.get(mapinfo["value"], "")).strip() if mapinfo["type"] == "column" else mapinfo["value"]
                     preview_message = preview_message.replace(f"{{{{{field}}}}}", val)
                 st.markdown(f"**To:** {row.get(column_mapping['mobile_no']['value'], '')}")
                 st.code(preview_message)
@@ -214,24 +210,13 @@ with tab2:
 
                 def send_message(i, row):
                     try:
-                        # PRIORITY LOGIC: Uploaded image > per-row image column > no image
-                        final_img = ""
-                        if image_url:
-                            final_img = image_url
-                        elif image_col_map:
-                            row_img_url = str(row.get(image_col_map, "")).strip()
-                            if row_img_url.startswith("http"):
-                                final_img = row_img_url
+                        final_img = image_url or str(row.get(image_col_map, "")).strip() if image_col_map else ""
 
-                        # Build params using flexible mapping
                         params = {}
                         for field, mapinfo in column_mapping.items():
                             if field == "mobile_no":
                                 continue
-                            if mapinfo["type"] == "column":
-                                val = str(row.get(mapinfo["value"], "")).strip()
-                            else:
-                                val = mapinfo["value"]
+                            val = str(row.get(mapinfo["value"], "")).strip() if mapinfo["type"] == "column" else mapinfo["value"]
                             params[field] = val
 
                         payload = {
@@ -246,7 +231,7 @@ with tab2:
                             }
                         }
 
-                        if final_img:
+                        if final_img.startswith("http"):
                             params["media"] = {"mediaLink": final_img}
 
                         response = requests.post(url, json=payload, headers=headers)
@@ -289,8 +274,6 @@ with tab2:
                         for col_idx in range(1, ws.max_column + 1):
                             ws.cell(row=row_idx, column=col_idx).fill = red_fill
                 wb.save(output_file)
-
-                subprocess.Popen(f'explorer "{os.path.abspath(os.path.dirname(output_file))}"')
 
                 with open(output_file, "rb") as f:
                     st.download_button("📥 Download Final Report", f, file_name=os.path.basename(output_file))
